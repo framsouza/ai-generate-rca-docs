@@ -144,18 +144,26 @@ def ask_openai_about_incidents(question, es):
 
     context = "Incident reports summary:\n"
     for incident in incidents:
-        context += f"- Incident ID {incident['id']} started at {incident['started_at']} with status {incident['status']}.\n"
+        resolved_by = incident.get('resolved_by', 'Unknown')
+        resolution_msg = incident.get('resolution_message', 'Unknown')
+        context += f"- Incident ID {incident['id']} started at {incident['started_at']} with status {incident['status']}. Resolved by: {resolved_by} with the following resolution message {resolution_msg}\n"
 
     context += "\nIncident events summary:\n"
     for event in events:
         event_id = event.get('id', 'Unknown ID')  
+        event_kind = event.get('kind', 'Unknown')  
+        event_user = event.get('user_display_name', 'Unknown')  
+        event_msg = event.get('event', 'Unknown')
         occurred_at = event.get('occurred_at', 'Unknown time')
         event_type = event.get('type', 'Unknown type')  
-        context += f"- Event ID {event_id} occurred at {occurred_at} with type {event_type}.\n"
+        context += f"- Event ID {event_id} occurred at {occurred_at} with type {event_type}, which was created by {event_user} containg the following message {event_msg}.\n"
     
     context += "\nRelevant Slack discussions:\n"
-    for message in messages[:5]:  # Limit to the last 5 messages for brevity
-        context += f"- Message: {message['text'][:100]}...\n"  # Truncate long messages for simplicity
+    for message in messages[:]:  # Limit to the last 5 messages for brevity
+        message_text = message.get('text', 'Unknown')
+        message_timestamp = message.get('timestamp', 'Unknown')
+        message_user = message.get('user', 'Unknown')
+        context += f"- Message: {message['text'][:]}...\n"  
 
     # Generate insights using OpenAI
     response = openai.ChatCompletion.create(
@@ -165,7 +173,7 @@ def ask_openai_about_incidents(question, es):
             {"role": "user", "content": context + question}
         ],
         temperature=0.7,
-        max_tokens=250,
+        max_tokens=4096,
         top_p=1.0,
         frequency_penalty=0.0,
         presence_penalty=0.0
@@ -190,6 +198,6 @@ if messages:
     preprocessed_messages = [preprocess_message_blocks(message) for message in messages]
     index_messages_to_es(es, preprocessed_messages)
 
-question = "What was the root cause for this incident?"
+question = "Give me a detailed summary of this incident, as well as the action itens and the list of people involved on it"
 answer = ask_openai_about_incidents(question, es)
 print(answer)
