@@ -1,3 +1,4 @@
+import streamlit as st
 from elasticsearch.exceptions import NotFoundError
 from elasticsearch import Elasticsearch
 from slack_sdk import WebClient
@@ -36,7 +37,6 @@ def index_incident_to_es(es, incident_data):
         document_to_index = incident_data["data"]["attributes"]
         document_to_index["id"] = incident_id
         res = es.index(index=index_name, id=incident_id, body=document_to_index)
-        print("Document indexed successfully:", res)
     except Exception as e:
         print("Error indexing document:", e)
 
@@ -56,7 +56,6 @@ def fetch_events_from_rootly(incident_id):
     headers = {"Authorization": f"Bearer {rootly_api}"}
     response = requests.get(rootly_events_url, headers=headers)
     if response.status_code == 200:
-        print("Successfully fetched events data.")
         return response.json()["data"]
     else:
         print(f"Failed to fetch events data: {response.text}")
@@ -92,7 +91,6 @@ def fetch_slack_channel_history(channel_id):
     try:
         result = client.conversations_history(channel=channel_id)
         messages = result["messages"]
-        print(f"Retrieved {len(messages)} messages.")
         return messages
     except SlackApiError as e:
         print(f"Error fetching messages: {e}")
@@ -156,20 +154,20 @@ def ask_openai_about_incidents(question, es):
         event_msg = event.get('event', 'Unknown')
         occurred_at = event.get('occurred_at', 'Unknown time')
         event_type = event.get('type', 'Unknown type')  
-        context += f"- Event ID {event_id} occurred at {occurred_at} with type {event_type}, which was created by {event_user} containg the following message {event_msg}.\n"
+        context += f"- Event ID {event_id} occurred at {occurred_at}, which was created by {event_user} containg the following message {event_msg}.\n"
     
     context += "\nRelevant Slack discussions:\n"
     for message in messages[:]:  # Limit to the last 5 messages for brevity
         message_text = message.get('text', 'Unknown')
         message_timestamp = message.get('timestamp', 'Unknown')
         message_user = message.get('user', 'Unknown')
-        context += f"- Message: {message['text'][:]}...\n"  
+        context += f"- Message: {message['text'][:]} {message_user} {message_timestamp} {message_text}...\n"  
 
     # Generate insights using OpenAI
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are a helpful assistant knowledgeable about our incident reports, incident events, and Slack discussions."},
+            {"role": "system", "content": "You are a helpful assistant knowledgeable about our incident reports, incident events, and Slack discussions. Please remember to consult the rootly-events, rootly-incidents and slack elasticsearch indices to answer any question."},
             {"role": "user", "content": context + question}
         ],
         temperature=0.7,
@@ -185,19 +183,30 @@ def ask_openai_about_incidents(question, es):
     except KeyError:
         return "Failed to generate an answer."
 
-incident_data = fetch_incident_from_rootly(incident_id)
-if incident_data:
-    index_incident_to_es(es, incident_data)
+def main():
+    st.title("Incident Management Dashboard")
 
-events_data = fetch_events_from_rootly(incident_id)
-if events_data:
-    index_events_to_es(es, events_data)
+    question = st.text_area("Enter your question for OpenAI:", "")
 
-messages = fetch_slack_channel_history(channel_id)
-if messages:
-    preprocessed_messages = [preprocess_message_blocks(message) for message in messages]
-    index_messages_to_es(es, preprocessed_messages)
+    if st.button("Fetch and Index Data"):
+        if incident_id:
+            incident_data = fetch_incident_from_rootly(incident_id)
+            if incident_data:
+                index_incident_to_es(es, incident_data)
 
-question = "Give me a detailed summary of this incident, as well as the action itens and the list of people involved on it"
-answer = ask_openai_about_incidents(question, es)
-print(answer)
+            events_data = fetch_events_from_rootly(incident_id)
+            if events_data:
+                index_events_to_es(es, events_data)
+
+        if channel_id:
+            messages = fetch_slack_channel_history(channel_id)
+            if messages:
+                preprocessed_messages = [preprocess_message_blocks(message) for message in messages]
+                index_messages_to_es(es, preprocessed_messages)
+
+        if question:
+            answer = ask_openai_about_incidents(question, es)
+            st.write(answer)
+
+if __name__ == "__main__":
+    main()
